@@ -123,7 +123,9 @@ When converting the annotations from your own dataset into JSON, the following e
 {
     "images": [{
         "id" : int,
-        "file_name" : str
+        "file_name" : str,
+        "width" : int,
+        "height" : int
     }],
     "annotations": [{
         "id" : int,

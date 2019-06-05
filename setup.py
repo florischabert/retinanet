@@ -13,26 +13,22 @@ nvcc_args = [
 ]
 
 # Build torch extensions
-ext_modules.append(CUDAExtension('retinanet._C', [
-        'csrc/extensions.cpp', 'csrc/tensorrt/engine.cpp',
-        'csrc/cuda/decode.cu', 'csrc/cuda/nms.cu',
-    ],
+ext_modules.append(CUDAExtension('retinanet._C',
+    ['csrc/extensions.cpp', 'csrc/tensorrt/engine.cpp', 'csrc/cuda/decode.cu', 'csrc/cuda/nms.cu'],
     extra_compile_args={ 'cxx': cxx_args, 'nvcc': nvcc_args },
     libraries=['nvinfer', 'nvinfer_plugin', 'nvonnxparser'],
 ))
 
 # Build tensorrt plugins library
-ext_modules.append(CUDAExtension('retinanet.tensorrt_plugins', [
-        'csrc/tensorrt/plugins.cpp', 'csrc/cuda/decode.cu', 'csrc/cuda/nms.cu',
-    ],
+ext_modules.append(CUDAExtension('retinanet.tensorrt_plugins',
+    ['csrc/tensorrt/plugins.cpp', 'csrc/cuda/decode.cu', 'csrc/cuda/nms.cu'],
     extra_compile_args={ 'cxx': cxx_args, 'nvcc': nvcc_args },
     libraries=['nvinfer', 'nvinfer_plugin', 'nvonnxparser'],
 ))
 
 # Build dali custom operators library
-ext_modules.append(CppExtension('retinanet.dali_operators', [
-        'csrc/dali/coco_custom_reader.cpp', 'csrc/dali/json11.cpp',
-    ],
+ext_modules.append(CppExtension('retinanet.dali_operators',
+    ['csrc/dali/coco_custom_reader.cpp', 'csrc/dali/json11.cpp'],
     extra_compile_args=cxx_args + dali_sysconfig.get_compile_flags(),
     include_dirs=['/usr/local/cuda/include'],
     extra_link_args=dali_sysconfig.get_link_flags(),
