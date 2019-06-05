@@ -26,7 +26,7 @@
 #include <vector>
 #include <optional>
 
-#include "engine.h"
+#include "tensorrt/engine.h"
 #include "cuda/decode.h"
 #include "cuda/nms.h"
 

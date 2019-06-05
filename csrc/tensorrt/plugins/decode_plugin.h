@@ -20,58 +20,80 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#pragma once
+#pragma once 
 
 #include <NvInfer.h>
 
-#include <vector>
 #include <cassert>
+#include <vector>
 
-#include "../cuda/nms.h"
+#include "../../cuda/decode.h"
 
 using namespace nvinfer1;
 
-#define RETINANET_PLUGIN_NAME "RetinaNetNMS"
+#define RETINANET_PLUGIN_NAME "RetinaNetDecode"
 #define RETINANET_PLUGIN_VERSION "1"
 #define RETINANET_PLUGIN_NAMESPACE ""
 
 namespace retinanet {
 
-class NMSPlugin : public IPluginV2 {
-  float _nms_thresh;
-  int _detections_per_im;
+class DecodePlugin : public IPluginV2 {
+  float _score_thresh;
+  int _top_n;
+  std::vector<float> _anchors;
+  float _scale;
 
-  size_t _count;
+  size_t _height;
+  size_t _width;
+  size_t _num_anchors;
+  size_t _num_classes;
 
 protected:
   void deserialize(void const* data, size_t length) {
     const char* d = static_cast<const char*>(data);
-    read(d, _nms_thresh);
-    read(d, _detections_per_im);
-    read(d, _count);
+    read(d, _score_thresh);
+    read(d, _top_n);
+    size_t anchors_size;
+    read(d, anchors_size);
+    while( anchors_size-- ) {
+      float val;
+      read(d, val);
+      _anchors.push_back(val);
+    }
+    read(d, _scale);
+    read(d, _height);
+    read(d, _width);
+    read(d, _num_anchors);
+    read(d, _num_classes);
   }
 
   size_t getSerializationSize() const override {
-    return sizeof(_nms_thresh) + sizeof(_detections_per_im)
-      + sizeof(_count);
+    return sizeof(_score_thresh) + sizeof(_top_n)
+      + sizeof(size_t) + sizeof(float) * _anchors.size() + sizeof(_scale)
+      + sizeof(_height) + sizeof(_width) + sizeof(_num_anchors) + sizeof(_num_classes);
   }
 
   void serialize(void *buffer) const override {
     char* d = static_cast<char*>(buffer);
-    write(d, _nms_thresh);
-    write(d, _detections_per_im);
-    write(d, _count);
+    write(d, _score_thresh);
+    write(d, _top_n);
+    write(d, _anchors.size());
+    for( auto &val : _anchors ) {
+      write(d, val);
+    }
+    write(d, _scale);
+    write(d, _height);
+    write(d, _width);
+    write(d, _num_anchors);
+    write(d, _num_classes);
   }
 
 public:
-  NMSPlugin(float nms_thresh, int detections_per_im)
-    : _nms_thresh(nms_thresh), _detections_per_im(detections_per_im) {
-    assert(nms_thresh > 0);
-    assert(detections_per_im > 0);
-  }
+  DecodePlugin(float score_thresh, int top_n, std::vector<float> const& anchors, int scale)
+    : _score_thresh(score_thresh), _top_n(top_n), _anchors(anchors), _scale(scale) {}
 
-  NMSPlugin(void const* data, size_t length) {
-    this->deserialize(data, length);
+  DecodePlugin(void const* data, size_t length) {
+      this->deserialize(data, length);
   }
 
   const char *getPluginType() const override {
@@ -88,9 +110,9 @@ public:
 
   Dims getOutputDimensions(int index,
                                      const Dims *inputs, int nbInputDims) override {
-    assert(nbInputDims == 3);
+    assert(nbInputDims == 2);
     assert(index < this->getNbOutputs());
-    return Dims3(_detections_per_im * (index == 1 ? 4 : 1), 1, 1);
+    return Dims3(_top_n * (index == 1 ? 4 : 1), 1, 1);
   }
 
   bool supportsFormat(DataType type, PluginFormat format) const override {
@@ -100,10 +122,15 @@ public:
   void configureWithFormat(const Dims* inputDims, int nbInputs, const Dims* outputDims, 
                         int nbOutputs, DataType type, PluginFormat format, int maxBatchSize) override {
     assert(type == nvinfer1::DataType::kFLOAT && format == nvinfer1::PluginFormat::kNCHW);
-    assert(nbInputs == 3);
-    assert(inputDims[0].d[0] == inputDims[2].d[0]);
-    assert(inputDims[1].d[0] == inputDims[2].d[0] * 4);
-    _count = inputDims[0].d[0];
+    assert(nbInputs == 2);
+    auto const& scores_dims = inputDims[0];
+    auto const& boxes_dims = inputDims[1];
+    assert(scores_dims.d[1] == boxes_dims.d[1]);
+    assert(scores_dims.d[2] == boxes_dims.d[2]);
+    _height = scores_dims.d[1];
+    _width = scores_dims.d[2];
+    _num_anchors = boxes_dims.d[0] / 4; 
+    _num_classes = scores_dims.d[0] / _num_anchors;
   }
 
   int initialize() override { return 0; }
@@ -113,8 +140,8 @@ public:
   size_t getWorkspaceSize(int maxBatchSize) const override {
     static int size = -1;
     if (size < 0) {
-      size = cuda::nms(maxBatchSize, nullptr, nullptr, _count, 
-        _detections_per_im, _nms_thresh, 
+      size = cuda::decode(maxBatchSize, nullptr, nullptr, _height, _width, _scale,
+        _num_anchors, _num_classes, _anchors, _score_thresh, _top_n, 
         nullptr, 0, nullptr);
     }
     return size;
@@ -123,23 +150,23 @@ public:
   int enqueue(int batchSize,
               const void *const *inputs, void **outputs,
               void *workspace, cudaStream_t stream) override {
-    return cuda::nms(batchSize, inputs, outputs, _count, 
-      _detections_per_im, _nms_thresh,
+    return cuda::decode(batchSize, inputs, outputs, _height, _width, _scale,
+      _num_anchors, _num_classes, _anchors, _score_thresh, _top_n,
       workspace, getWorkspaceSize(batchSize), stream);
   }
 
-  void destroy() override {}
+  void destroy() override {};
 
   const char *getPluginNamespace() const override {
     return RETINANET_PLUGIN_NAMESPACE;
   }
   
   void setPluginNamespace(const char *N) override {
-    
+
   }
 
   IPluginV2 *clone() const override {
-    return new NMSPlugin(_nms_thresh, _detections_per_im);
+    return new DecodePlugin(_score_thresh, _top_n, _anchors, _scale);
   }
 
 private:
@@ -154,13 +181,10 @@ private:
   }
 };
 
-class NMSPluginCreator : public IPluginCreator {
+class DecodePluginCreator : public IPluginCreator {
 public:
-  NMSPluginCreator() {}
-  
-  const char *getPluginNamespace() const override {
-    return RETINANET_PLUGIN_NAMESPACE;
-  }
+  DecodePluginCreator() {}
+
   const char *getPluginName () const override {
     return RETINANET_PLUGIN_NAME;
   }
@@ -169,8 +193,12 @@ public:
     return RETINANET_PLUGIN_VERSION;
   }
  
+  const char *getPluginNamespace() const override {
+    return RETINANET_PLUGIN_NAMESPACE;
+  }
+
   IPluginV2 *deserializePlugin (const char *name, const void *serialData, size_t serialLength) override {
-    return new NMSPlugin(serialData, serialLength);
+    return new DecodePlugin(serialData, serialLength);
   }
 
   void setPluginNamespace(const char *N) override {}
@@ -178,7 +206,7 @@ public:
   IPluginV2 *createPlugin (const char *name, const PluginFieldCollection *fc) override { return nullptr; }
 };
 
-REGISTER_TENSORRT_PLUGIN(NMSPluginCreator);
+REGISTER_TENSORRT_PLUGIN(DecodePluginCreator);
 
 }
 

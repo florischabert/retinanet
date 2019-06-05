@@ -28,8 +28,8 @@
 #include <NvOnnxConfig.h>
 #include <NvOnnxParser.h>
 
-#include "plugins/DecodePlugin.h"
-#include "plugins/NMSPlugin.h"
+#include "plugins/decode_plugin.h"
+#include "plugins/nms_plugin.h"
 #include "calibrator.h"
 
 using namespace nvinfer1;
